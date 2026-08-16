@@ -1,6 +1,14 @@
 ---
-name: "dev-workflow"
-description: "Use this skill when starting to implement, fix, or change code based on a requirement — whether that requirement comes from a Jira ticket, a PR description, or plain text typed directly by the user in chat (e.g. \"add a retry to the payment webhook\", \"fix the null pointer in OrderService\"). This is the standard implementation pipeline covering requirement understanding, gap check, planning, implementation, testing, and summary. Do NOT trigger for pure questions, read-only exploration, or discussions that aren't asking for a code change."
+name: dev-workflow
+description: >-
+  Use this skill when starting to implement, fix, or change code
+  based on a requirement — whether that requirement comes from a Jira ticket,
+  a PR description, or plain text typed directly by the user in chat (e.g.
+  "add a retry to the payment webhook", "fix the null pointer in
+  OrderService"). This is the standard implementation pipeline covering
+  requirement understanding, gap check, planning, implementation, testing,
+  and summary. Do NOT trigger for pure questions, read-only exploration, or
+  discussions that aren't asking for a code change.
 ---
 
 # Dev Workflow Skill
@@ -38,16 +46,14 @@ regardless of how simple the task seemed.
    inputs is unchanged," "no new test regressions." Never skip AC
    extraction just because the task is a bug fix or looks small.
    AC not explicitly stated → infer and mark as an assumption (same
-   blocker/no-blocker rule as below applies to inferred AC). **Every
+   risk-tagging rule in step 6 below applies to inferred AC too). **Every
    inferred assumption goes into a visible "Assumptions" list — never
    inferred silently and folded straight into implementation.** The user
    needs to see what was guessed before code gets written on top of it.
 4. **Gap Check**: cross-reference against `docs/codebase/CODEBASE.md` (or
    relevant sections of it) and any files the user already named. Do not
    scan the whole repo if the file(s) needed are already known and the
-   change is self-contained. If `docs/codebase/CODEBASE.md` doesn't exist at
-   all yet, run the matching `codebase-summary-*` skill first — don't
-   attempt the Gap Check against a file that isn't there.
+   change is self-contained.
 5. **Persist immediately, always**: write the AC checklist to
    `.task/{branch-or-ticket-slug}-ac.md` as markdown checkboxes (`- [ ] ...`),
    unchecked. This happens on every task, including the fast path in step 7
@@ -56,25 +62,38 @@ regardless of how simple the task seemed.
    get compacted on long tasks, and Copilot's own auto-compaction has been
    known to drop skill instructions from context entirely on longer tasks —
    the file is the only thing guaranteed to survive that).
-6. **Blocker rule** — stop and ask (once, all questions combined into one
-   message) only if guessing wrong would cause real damage:
-   - Blocker: spec conflicts with a DB/type constraint (e.g. optional field,
-     NOT NULL column, no default)
-   - Blocker: requirement contradicts something CODEBASE.md's "Watch out"
-     section warns about
-   - Blocker: requirement references a component/flow that doesn't exist
-   - Not a blocker: unstated error message wording, minor edge cases that
-     don't affect data integrity — infer from existing patterns, state the
-     assumption, keep going.
+6. **Unknown surfacing** — compile every unclear/unstated item found during
+   Gap Check into a single list, tag each by risk:
+   - 🔴 **High-risk** — a guess here isn't cheaply fixed later: conflicts
+     with a DB/type constraint, contradicts CODEBASE.md's "Watch out",
+     references a component/flow that doesn't exist, or omits a structural
+     identifier/contract value (error code, status code, event name, enum
+     value, API field name) that other systems might depend on
+   - 🟡 **Low-risk** — free text, wording, labels, cosmetic edge cases that
+     don't touch any identifier or data integrity
+   - **🟡 items never block.** Infer automatically, state the assumption in
+     the visible Assumptions list, keep going — no round-trip spent on these.
+   - **If any 🔴 item exists, stop and present the full list with a choice
+     per item** (or "same choice for all" if the user says so):
+     1. **Implement what's known** — build the clear parts normally, leave
+        an explicit `TODO`/stub for each 🔴 unknown instead of guessing its
+        value
+     2. **Infer and proceed** — guess reasonably, state the assumption
+        clearly, keep going (same as how 🟡 items are always handled)
+     3. **I'll provide it** — user adds the missing detail; re-check *only*
+        that item against Gap Check, don't re-run Step 1 from scratch
+   - Combine all 🔴 questions into one message — never ask one at a time.
 7. **Only now, decide whether to stop for plan confirmation** (sub-steps
    1-6 above already happened regardless of this decision — the AC file
-   already exists on disk either way):
-   - No blockers, AC clear, change is self-contained (single file/module,
-     no schema change, no cross-service impact) → continue directly into
-     Explore + Plan + Implement in the same response, no confirmation stop.
-     **Still open the response with the Assumptions list from step 3** (even
-     if short, even if just "none") before showing the plan/code — the user
-     should never have to dig for what was guessed.
+   already exists on disk either way, and any 🔴 unknowns were already
+   resolved via the 3-choice menu before reaching this point):
+   - No unresolved 🔴 items, AC clear, change is self-contained (single
+     file/module, no schema change, no cross-service impact) → continue
+     directly into Explore + Plan + Implement in the same response, no
+     confirmation stop. **Still open the response with the Assumptions
+     list from step 3** (even if short, even if just "none") before
+     showing the plan/code — the user should never have to dig for what
+     was guessed.
    - Otherwise → proceed to Step 2+3 and stop for Plan confirmation.
 
 ## Step 2+3 — Explore + Plan (skip if Step 1 already routed to fast path)
@@ -82,64 +101,40 @@ regardless of how simple the task seemed.
   files it points to that are actually needed — don't explore beyond that
   without a reason.
 - **Open with the Gaps/Assumptions list carried over from Step 1** — what's
-  unclear, what's being guessed and why, what a blocker forced you to ask
-  about. This is what the user is actually confirming, not just the plan
-  bullets that follow from it.
+  unclear, what's being guessed and why, which 🔴 items were resolved via
+  the 3-choice menu and what was chosen. This is what the user is actually
+  confirming, not just the plan bullets that follow from it.
 - Write the plan as short bullets, each one referencing what it's based on
   (e.g. "per CODEBASE.md's error-handling convention" / "per
   OrderService.kt"). A plan bullet with no traceable source is invalid.
 - Map each plan item to the AC item(s) it satisfies.
-- **Include, as an explicit plan item, which tests will be written or
-  updated for each new/changed AC item** — this isn't optional detail, it's
-  what makes Step 5b's auto-verification possible later. A plan with code
-  changes but no corresponding test changes should be treated as incomplete.
 - Stop here and wait for plan confirmation.
 
 ## Step 4 — Implement
 - Follow the confirmed plan and existing conventions.
-- **Write or update unit tests covering each new or changed AC item as part
-  of this step, not as an afterthought.** Step 5 only runs the existing test
-  suite — it does not write new tests. If no test exists for a given AC item
-  by the time Step 5 runs, that item cannot be auto-verified and will fall
-  through to "needs manual verification" even if the code is correct. Tests
-  written here are what make Step 5b's pass/fail table meaningful instead of
-  mostly empty.
 - If this task exceeds ~10 tool calls or touches more than ~5 files,
   re-read `.task/{slug}-ac.md` from disk mid-task before continuing —
   don't trust what's still in context.
 
 ## Step 5 — Test
-5a. **Lint/format first, if the project has one configured.** Check
-    CODEBASE.md's Conventions section for a lint/format command (ktlint,
-    detekt, spotless, etc.) and run it, fixing violations directly. This is
-    cheap to do now and avoids a second review round purely over style.
-5b. Run the test suite using the command noted in CODEBASE.md's Testing
-    section (don't assume `npm test`/`gradle test` — check the file; if the
-    Testing section is missing because CODEBASE.md predates this being
-    tracked, ask the user for the command once rather than guessing). If
+5a. Run the test suite using the command noted in CODEBASE.md's Testing
+    section (don't assume `npm test`/`gradle test` — check the file). If
     it fails, fix and retry up to **2 times**. Still failing after that →
     stop, report the error, let the user decide. Don't retry indefinitely.
-5c. Re-read `.task/{slug}-ac.md` from disk and check off each AC item
+5b. Re-read `.task/{slug}-ac.md` from disk and check off each AC item
     individually — pass/fail per item, not one overall "looks good."
     **Update the file itself**, not just the response: mark each item
-    `- [x] {item} — auto-verified` if a test covers it and passes,
+    `- [x] {item} — auto-verified` if the test suite covers it and passes,
     or leave `- [ ] {item} — needs manual verification` if nothing covers
     it. This is what makes the persisted file useful afterward — the user
     should be able to open `.task/{slug}-ac.md` later and see exactly
     what's already confirmed vs what they still need to check themselves.
-    A high proportion of "needs manual verification" items is a signal that
-    Step 4's test-writing was skipped or incomplete — worth flagging to the
-    user rather than passing over silently.
 
 ## Step 6 — Summary
 - List files changed, 1-3 lines.
-- Copy the AC pass/fail table from Step 5 into the PR description. This
-  skill prepares that description but does not push commits or open the PR
-  itself — say so explicitly rather than implying it's been done, so the
-  user knows that part is still theirs to do (or ask them how they'd like
-  that handled, if it's unclear).
+- Copy the AC pass/fail table from Step 5 into the PR description.
 - **Do NOT delete `.task/{slug}-ac.md`.** Keep it — it now holds the
-  updated checklist from Step 5c (auto-verified vs needs-manual-verification),
+  updated checklist from Step 5b (auto-verified vs needs-manual-verification),
   not the raw Step 1 version. Cleanup is manual: the user deletes it
   themselves once they've finished verifying, not the agent.
 
@@ -147,8 +142,7 @@ regardless of how simple the task seemed.
 | Skill | Called from |
 |---|---|
 | `requirement-version-resolver` | Step 1, only if source is Jira/Confluence |
-| `codebase-summary-kotlin-springboot` / `codebase-summary-nextjs` | Step 1 (if CODEBASE.md missing) and Step 2+3, whichever matches the repo's stack |
+| `codebase-summary-*` | Step 2+3, whichever matches this repo's stack (Kotlin/Spring Boot, Next.js, Go, etc.) |
 
 Model selection per step lives in the team README, not here — it's a
 human/admin decision, not something this file needs to spend tokens on.
-
